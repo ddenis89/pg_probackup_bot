@@ -11,6 +11,8 @@
   "ssh_key": "./.ssh/id_rsa",
   "ssh_port": 22,
   "ssh_user": "postgres",
+  "pg_version": "14",
+  "backup_dir": "/backup/probackup",
   "db_host_mapping": {
     "main1": {"db_host": "S-DB1", "pg_ctl_instance": "main1", "pgdata": "/data/main1"},
     "main2": {"db_host": "S-DB2", "pg_ctl_instance": "main2", "pgdata": "/data/main2"}
