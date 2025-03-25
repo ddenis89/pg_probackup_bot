@@ -16,7 +16,7 @@ CONFIG_FILE = os.environ.get('PROBACKUP_CONFIG', 'config.json')
 with open(CONFIG_FILE, 'r') as f:
     config = json.load(f)
 
-# Основные настройки
+# Основные настройки (без дефолтных значений, ожидается корректный config.json)
 HOST = config['host']
 PORT = config['port']
 ARCHIVE_HOST = config['archive_host']
@@ -30,6 +30,8 @@ LOG_BACKUP_COUNT = config['log_backup_count']
 SSH_KEY = config['ssh_key']
 SSH_PORT = config['ssh_port']
 SSH_USER = config['ssh_user']
+PG_VERSION = config['pg_version']
+BACKUP_DIR = config['backup_dir']
 DB_HOST_MAPPING = config['db_host_mapping']
 
 queue = Queue()
@@ -145,7 +147,7 @@ def start_cluster_via_ssh(db_host, db_instance):
     ssh_cmd = (
         f"ssh -p {SSH_PORT} -i {SSH_KEY} "
         f"{SSH_USER}@{db_host} "
-        f"'pg_ctlcluster 11 {pg_ctl_instance} start'"
+        f"'sudo systemctl start postgresql@{PG_VERSION}-{pg_ctl_instance}'"
     )
     logger.info(f"Starting cluster via SSH: {ssh_cmd}")
     result = subprocess.run(
@@ -163,7 +165,7 @@ def start_cluster_via_ssh(db_host, db_instance):
         logger.error(f"Failed to start cluster on {db_host}: {result.stderr}")
         notification_message = f"{pg_ctl_instance} сервер не запустился за отведённое время или не восстановился корректно бэкап"
     
-    curl_cmd = f"curl -X POST -d \"message={notification_message}\" {MESSAGE_HOST}:8080"
+    curl_cmd = f"curl -X POST -d \"message={notification_message}\" {MESSAGE_HOST}:8085/we.php"
     logger.info(f"Sending notification via curl: {curl_cmd}")
     curl_result = subprocess.run(
         curl_cmd,
@@ -289,15 +291,17 @@ def process_task(task):
     
     mapping = DB_HOST_MAPPING.get(db_instance, {})
     pgdata = mapping.get('pgdata', f"/data/{db_instance}")
-    
+    pg_ctl_instance = mapping.get('pg_ctl_instance')
+
     restore_cmd = (
-        f"pg_probackup-11 restore --skip-external-dirs --progress -j2 "
-        f"--instance={db_instance} --no-validate -B /data/probackup "
-        f"--remote-host={db_host} --remote-port=422 --remote-user=postgres "
+        f"pg_probackup-{PG_VERSION} restore --skip-external-dirs --progress -j2 "
+        f"--instance={db_instance} --no-validate -B {BACKUP_DIR} "
+        f"--remote-host={db_host} --remote-port=22 --remote-user=postgres "
         f"--pgdata={pgdata} "
         f"--recovery-target-action=promote --archive-user=probackup "
-        f"--archive-host={ARCHIVE_HOST} --archive-port=422 "
+        f"--archive-host={ARCHIVE_HOST} --archive-port=22 "
         f"--recovery-target='immediate' "
+        f"--waldir=/pgwal/{pg_ctl_instance} "
         f"--backup-id={backup_id}"
     )
     if incremental:
@@ -319,13 +323,13 @@ def prepare_restore_environment(db_host, db_instance, incremental=False):
         ssh_cmd = (
             f"ssh -p {SSH_PORT} -i {SSH_KEY} "
             f"{SSH_USER}@{db_host} "
-            f"'pg_ctlcluster 11 {pg_ctl_instance} stop'"
+            f"'sudo systemctl stop postgresql@{PG_VERSION}-{pg_ctl_instance}'"
         )
     else:
         ssh_cmd = (
             f"ssh -p {SSH_PORT} -i {SSH_KEY} "
             f"{SSH_USER}@{db_host} "
-            f"'pg_ctlcluster 11 {pg_ctl_instance} stop; rm -rf {pgdata}/*'"
+            f"'sudo systemctl stop postgresql@{PG_VERSION}-{pg_ctl_instance}; rm -rf /pgwal/{pg_ctl_instance}/*; rm -rf {pgdata}/*'"
         )
     logger.info(f"Executing pre-restore commands via SSH: {ssh_cmd}")
     result = subprocess.run(
